@@ -4,11 +4,10 @@ import { User } from "../models/user.model.js";
 export const verifyJWT = async (req, res, next) => {
   try {
     let token;
-
-    // Cookie থেকে token
+    
     token = req.cookies?.accessToken;
 
-    // Header fallback
+    
     if (!token && req.headers.authorization?.startsWith("Bearer ")) {
       token = req.headers.authorization.split(" ")[1];
     }

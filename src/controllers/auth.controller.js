@@ -1,47 +1,488 @@
+import crypto from "crypto";
+import mongoose from "mongoose";
 import { User } from "../models/user.model.js";
 import { Employee } from "../models/employee.model.js";
+import { Department } from "../models/department.model.js";
+import { Designation } from "../models/designation.model.js";
 import ErrorHandler from "../utils/ErrorHandler.js";
 import asyncHandler from "../utils/asyncHandler.js";
+import { generateUniqueEmployeeId } from "../utils/generateEmployeeId.js";
+import { sendEmail } from "../utils/sendEmail.js";
 
-export const registerUser = asyncHandler(async (req, res, next) => {
-  const { name, email, password, role } = req.body;
+const EMPLOYEE_PROFILE_ROLES = ["employee", "manager"];
+const USER_ROLES = ["admin", "hr", "manager", "employee"];
+const EMPLOYMENT_TYPES = ["full-time", "part-time", "intern", "contract"];
 
-  if (!name || !email || !password) {
-    return next(
-      new ErrorHandler("Name, email and password are required", 400)
+const isBlank = (value) =>
+  value === undefined || value === null || String(value).trim() === "";
+
+const normalizeObjectId = (value, label, required = false) => {
+  if (isBlank(value)) {
+    if (required) {
+      throw new ErrorHandler(`${label} is required`, 400);
+    }
+
+    return undefined;
+  }
+
+  const normalizedValue = String(value).trim();
+
+  if (!mongoose.Types.ObjectId.isValid(normalizedValue)) {
+    throw new ErrorHandler(`${label} is invalid`, 400);
+  }
+
+  return normalizedValue;
+};
+
+const normalizeSalary = (salary) => {
+  if (isBlank(salary)) return undefined;
+
+  const normalizedSalary = Number(salary);
+
+  if (!Number.isFinite(normalizedSalary) || normalizedSalary < 0) {
+    throw new ErrorHandler("Salary must be a valid positive number", 400);
+  }
+
+  return normalizedSalary;
+};
+
+const normalizeDate = (date, label) => {
+  if (isBlank(date)) return undefined;
+
+  const normalizedDate = new Date(date);
+
+  if (Number.isNaN(normalizedDate.getTime())) {
+    throw new ErrorHandler(`${label} is invalid`, 400);
+  }
+
+  return normalizedDate;
+};
+
+const normalizeEmploymentType = (employmentType) => {
+  if (isBlank(employmentType)) return undefined;
+
+  const normalizedType = String(employmentType).trim().toLowerCase();
+
+  if (!EMPLOYMENT_TYPES.includes(normalizedType)) {
+    throw new ErrorHandler("Employment type is invalid", 400);
+  }
+
+  return normalizedType;
+};
+
+const buildEmployeeInvitePayload = async ({
+  department,
+  designation,
+  manager,
+  joiningDate,
+  employmentType,
+  salary,
+}) => {
+  const departmentId = normalizeObjectId(department, "Department", true);
+  const designationId = normalizeObjectId(designation, "Designation", true);
+  const managerId = normalizeObjectId(manager, "Manager");
+
+  const [departmentDoc, designationDoc, managerDoc] = await Promise.all([
+    Department.findById(departmentId),
+    Designation.findById(designationId),
+    managerId ? Employee.findById(managerId) : null,
+  ]);
+
+  if (!departmentDoc || !departmentDoc.isActive) {
+    throw new ErrorHandler("Department not found or inactive", 404);
+  }
+
+  if (!designationDoc || !designationDoc.isActive) {
+    throw new ErrorHandler("Designation not found or inactive", 404);
+  }
+
+  if (String(designationDoc.department) !== String(departmentDoc._id)) {
+    throw new ErrorHandler(
+      "Designation does not belong to selected department",
+      400
     );
   }
 
-  const existingUser = await User.findOne({ email });
+  if (managerId && !managerDoc) {
+    throw new ErrorHandler("Manager employee profile not found", 404);
+  }
 
-  if (existingUser) {
-    return next(new ErrorHandler("User already exists", 400));
+  return {
+    department: departmentId,
+    designation: designationId,
+    manager: managerId,
+    joiningDate: normalizeDate(joiningDate, "Joining date"),
+    employmentType: normalizeEmploymentType(employmentType),
+    salary: normalizeSalary(salary),
+  };
+};
+
+const compactObject = (value) =>
+  Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
+  );
+
+const getCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+});
+
+const appendTokenToUrl = (url, token) => {
+  try {
+    const inviteUrl = new URL(url);
+    inviteUrl.searchParams.set("token", token);
+    return inviteUrl.toString();
+  } catch {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}token=${encodeURIComponent(token)}`;
+  }
+};
+
+const buildInviteLink = (token) => {
+  const configuredUrl = process.env.INVITE_ACCEPT_URL?.trim();
+  if (configuredUrl) {
+    return appendTokenToUrl(configuredUrl, token);
+  }
+
+  const frontendUrl = (process.env.FRONTEND_URL || "http://localhost:5173")
+    .trim()
+    .replace(/\/$/, "");
+
+  return `${frontendUrl}/accept-invite?token=${encodeURIComponent(token)}`;
+};
+
+const hashToken = (token) => {
+  return crypto.createHash("sha256").update(token).digest("hex");
+};
+
+const escapeHtml = (value) => {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+};
+
+const serializeUser = (user) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  isActive: user.isActive,
+});
+
+const serializeEmployee = (employee) => {
+  if (!employee) return null;
+
+  return {
+    _id: employee._id,
+    employeeId: employee.employeeId,
+    department: employee.department,
+    designation: employee.designation,
+    onboardingCompleted: employee.onboardingCompleted,
+  };
+};
+
+const sendInviteEmail = async ({ user, inviteLink }) => {
+  const safeName = escapeHtml(user.name);
+  const safeInviteLink = escapeHtml(inviteLink);
+
+  return sendEmail({
+    to: user.email,
+    subject: "Complete your HRMS account setup",
+    text: [
+      `Hi ${user.name},`,
+      "",
+      "You have been invited to the HRMS application.",
+      "Use the link below to set your password. This link expires in 48 hours.",
+      "",
+      inviteLink,
+      "",
+      "If you cannot click the link, please copy and paste it into your browser.",
+    ].join("\n"),
+    html: `
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #09111f; color: #e2e8f0; border-radius: 12px; border: 1px solid #1e293b;">
+        <div style="text-align: center; padding-bottom: 20px; border-bottom: 1px solid #1e293b;">
+          <h2 style="color: #25c979; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px;">HRMS Enterprise</h2>
+          <p style="color: #64748b; margin: 5px 0 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;">Account Invitation</p>
+        </div>
+        <div style="padding: 30px 20px;">
+          <h3 style="color: #ffffff; margin-top: 0; font-size: 18px;">Welcome, ${safeName}!</h3>
+          <p style="line-height: 1.6; font-size: 14px; color: #94a3b8;">You have been invited to join the <strong>HRMS Enterprise</strong> platform. Please use the button below to set up your password and complete your registration.</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${safeInviteLink}" style="display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #25c979 0%, #1f9c5e 100%); color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 15px rgba(37,201,121,0.25);">Set Password & Setup Account</a>
+          </div>
+          <p style="color: #64748b; font-size: 12px; line-height: 1.5; background-color: #020617; padding: 15px; border-radius: 6px; border: 1px solid #1e293b;">
+            <strong>Note:</strong> This link is secure and will expire in 48 hours for security reasons. If the button above does not work, please copy and paste the link below into your browser:<br>
+            <a href="${safeInviteLink}" style="color: #25c979; word-break: break-all; text-decoration: none;">${safeInviteLink}</a>
+          </p>
+        </div>
+        <div style="text-align: center; padding-top: 20px; border-top: 1px solid #1e293b; font-size: 11px; color: #64748b;">
+          <p style="margin: 0;">This is an automated system notification. Please do not reply directly to this email.</p>
+          <p style="margin: 5px 0 0 0;">&copy; 2026 HRMS Enterprise. All rights reserved.</p>
+        </div>
+      </div>
+    `,
+  });
+};
+
+export const bootstrapAdmin = asyncHandler(async (req, res, next) => {
+  const existingUsers = await User.countDocuments();
+
+  if (existingUsers > 0) {
+    return next(
+      new ErrorHandler(
+        "Initial admin already exists. Ask an admin or HR user to invite you.",
+        409
+      )
+    );
+  }
+
+  const { name, email, password, confirmPassword } = req.body;
+
+  if (!name || !email || !password) {
+    return next(
+      new ErrorHandler("Name, email and password are required", 400));
+  }
+
+  if (password.length < 6) {
+    return next(
+      new ErrorHandler("Password must be at least 6 characters", 400)
+    );
+  }
+
+  if (confirmPassword !== undefined && password !== confirmPassword) {
+    return next(new ErrorHandler("Password confirmation does not match", 400));
   }
 
   const user = await User.create({
-    name,
-    email,
+    name: String(name).trim(),
+    email: String(email).trim().toLowerCase(),
     password,
-    role,
+    role: "admin",
+    isActive: true,
   });
 
   const accessToken = user.generateAccessToken();
   const refreshToken = user.generateRefreshToken();
 
   user.refreshToken = refreshToken;
+  user.lastLogin = new Date();
   await user.save({ validateBeforeSave: false });
+
+  const options = getCookieOptions();
+
+  return res
+    .status(201)
+    .cookie("accessToken", accessToken, {
+      ...options,
+      maxAge: 15 * 60 * 1000,
+    })
+    .cookie("refreshToken", refreshToken, {
+      ...options,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    })
+    .json({
+      success: true,
+      message: "Initial admin account created",
+      user: serializeUser(user),
+      employee: null,
+    });
+});
+
+// Admin/HR creates a user without a password and sends an invite email.
+export const registerUser = asyncHandler(async (req, res, next) => {
+  const {
+    name,
+    email,
+    role = "employee",
+    department,
+    designation,
+    manager,
+    joiningDate,
+    employmentType,
+    salary,
+  } = req.body;
+
+  if (!name || !email) {
+    return next(new ErrorHandler("Name and email are required", 400));
+  }
+
+  const normalizedName = String(name).trim();
+  const normalizedEmail = String(email).trim().toLowerCase();
+  const normalizedRole = String(role).trim().toLowerCase();
+
+  if (!normalizedName || !normalizedEmail) {
+    return next(new ErrorHandler("Name and email are required", 400));
+  }
+
+  if (!USER_ROLES.includes(normalizedRole)) {
+    return next(new ErrorHandler("Invalid user role", 400));
+  }
+
+  let employeeInvitePayload = null;
+
+  if (EMPLOYEE_PROFILE_ROLES.includes(normalizedRole)) {
+    employeeInvitePayload = await buildEmployeeInvitePayload({
+      department,
+      designation,
+      manager,
+      joiningDate,
+      employmentType,
+      salary,
+    });
+  }
+
+  const existingUser = await User.findOne({ email: normalizedEmail });
+
+  if (existingUser) {
+    return next(new ErrorHandler("User already exists", 400));
+  }
+
+  const user = new User({
+    name: normalizedName,
+    email: normalizedEmail,
+    role: normalizedRole,
+    isActive: false,
+  });
+
+  const inviteToken = user.generateInviteToken();
+  await user.save({ validateBeforeSave: false });
+
+  let employee = null;
+
+  if (EMPLOYEE_PROFILE_ROLES.includes(normalizedRole)) {
+    const employeeId = await generateUniqueEmployeeId();
+
+    try {
+      employee = await Employee.create(compactObject({
+        user: user._id,
+        employeeId,
+        ...employeeInvitePayload,
+        onboardingCompleted: false,
+      }));
+    } catch (error) {
+      await User.findByIdAndDelete(user._id);
+      throw error;
+    }
+  }
+
+  const inviteLink = buildInviteLink(inviteToken);
+  const emailResult = await sendInviteEmail({ user, inviteLink });
 
   return res.status(201).json({
     success: true,
-    message: "User registered successfully",
-    accessToken,
-    refreshToken,
-    user: {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    },
+    message: emailResult.sent
+      ? "User invited successfully"
+      : "User invited successfully. Configure SMTP to send invite email.",
+    emailSent: emailResult.sent,
+    inviteLink:
+      process.env.NODE_ENV === "production" && emailResult.sent
+        ? undefined
+        : inviteLink,
+    user: serializeUser(user),
+    employee: serializeEmployee(employee),
+  });
+});
+
+export const registerEmployee = (req, res, next) => {
+  const role = String(req.body?.role || "employee").trim().toLowerCase();
+
+  if (!EMPLOYEE_PROFILE_ROLES.includes(role)) {
+    return next(
+      new ErrorHandler(
+        "Employee registration role must be employee or manager",
+        400
+      )
+    );
+  }
+
+  req.body = {
+    ...(req.body || {}),
+    role,
+  };
+
+  return registerUser(req, res, next);
+};
+
+export const verifyInvite = asyncHandler(async (req, res, next) => {
+  const token = req.query.token || req.body?.token;
+
+  if (!token) {
+    return next(new ErrorHandler("Invite token is required", 400));
+  }
+
+  const user = await User.findOne({
+    inviteToken: hashToken(token),
+    inviteTokenExpiry: { $gt: new Date() },
+  }).select("+password +inviteToken");
+
+  if (!user) {
+    return next(new ErrorHandler("Invalid or expired invite link", 400));
+  }
+
+  if (user.password) {
+    return next(new ErrorHandler("Invite has already been accepted", 400));
+  }
+
+  const employee = await Employee.findOne({ user: user._id });
+
+  return res.status(200).json({
+    success: true,
+    message: "Invite link is valid",
+    expiresAt: user.inviteTokenExpiry,
+    user: serializeUser(user),
+    employee: serializeEmployee(employee),
+  });
+});
+
+// Employee uses the emailed token once to set the initial password.
+export const acceptInvite = asyncHandler(async (req, res, next) => {
+  const { password, confirmPassword } = req.body || {};
+  const token = req.body?.token || req.query.token;
+
+  if (!token || !password) {
+    return next(new ErrorHandler("Token and password are required", 400));
+  }
+
+  if (password.length < 6) {
+    return next(
+      new ErrorHandler("Password must be at least 6 characters", 400)
+    );
+  }
+
+  if (confirmPassword !== undefined && password !== confirmPassword) {
+    return next(new ErrorHandler("Password confirmation does not match", 400));
+  }
+
+  const user = await User.findOne({
+    inviteToken: hashToken(token),
+    inviteTokenExpiry: { $gt: new Date() },
+  }).select("+password +inviteToken");
+
+  if (!user) {
+    return next(new ErrorHandler("Invalid or expired invite link", 400));
+  }
+
+  if (user.password) {
+    return next(new ErrorHandler("Invite has already been accepted", 400));
+  }
+
+  user.password = password;
+  user.inviteToken = null;
+  user.inviteTokenExpiry = null;
+  user.isActive = true;
+  await user.save();
+
+  const employee = await Employee.findOne({ user: user._id });
+
+  return res.status(200).json({
+    success: true,
+    message: "Password set successfully. Please login and complete onboarding.",
+    user: serializeUser(user),
+    employee: serializeEmployee(employee),
   });
 });
 
@@ -49,19 +490,24 @@ export const registerUser = asyncHandler(async (req, res, next) => {
 // LOGIN USER
 // ==============================
 export const loginUser = asyncHandler(async (req, res, next) => {
-  const { identifier, password } = req.body;
+  const { identifier, email, employeeId, password } = req.body || {};
+  const loginIdentifier = String(identifier || email || employeeId || "").trim();
 
-  if (!identifier || !password) {
+  if (!loginIdentifier || !password) {
     return next(
       new ErrorHandler("Email/Employee ID and password are required", 400)
     );
   }
 
-  let user = await User.findOne({ email: identifier }).select("+password");
+  let user = await User.findOne({
+    email: loginIdentifier.toLowerCase(),
+  }).select("+password");
   let employee = null;
 
   if (!user) {
-    employee = await Employee.findOne({ empId: identifier }).populate({
+    employee = await Employee.findOne({
+      employeeId: loginIdentifier.toUpperCase(),
+    }).populate({
       path: "user",
       select: "+password name email role isActive",
     });
@@ -81,6 +527,12 @@ export const loginUser = asyncHandler(async (req, res, next) => {
     return next(new ErrorHandler("Account is inactive", 403));
   }
 
+  if (!user.password) {
+    return next(
+      new ErrorHandler("Please accept your invite and set a password first", 403)
+    );
+  }
+
   const isPasswordMatch = await user.comparePassword(password);
 
   if (!isPasswordMatch) {
@@ -89,90 +541,53 @@ export const loginUser = asyncHandler(async (req, res, next) => {
     );
   }
 
-  if (!employee && user.role === "employee") {
+  if (!employee && EMPLOYEE_PROFILE_ROLES.includes(user.role)) {
     employee = await Employee.findOne({ user: user._id });
   }
 
-  // const accessToken = user.generateAccessToken();
-  // const refreshToken = user.generateRefreshToken();
-
-  // user.refreshToken = refreshToken;
-  // await user.save({ validateBeforeSave: false });
-
-  // return res.status(200).json({
-  //   success: true,
-  //   message: "Login successful",
-  //   accessToken,
-  //   refreshToken,
-  //   user: {
-  //     _id: user._id,
-  //     name: user.name,
-  //     email: user.email,
-  //     role: user.role,
-  //   },
-  //   employee: employee
-  //     ? {
-  //         _id: employee._id,
-  //         empId: employee.empId,
-  //         department: employee.department,
-  //         designation: employee.designation,
-  //       }
-  //     : null,
-  // });
   const accessToken = user.generateAccessToken();
-const refreshToken = user.generateRefreshToken();
+  const refreshToken = user.generateRefreshToken();
 
-user.refreshToken = refreshToken;
-await user.save({ validateBeforeSave: false });
+  user.refreshToken = refreshToken;
+  user.lastLogin = new Date();
+  await user.save({ validateBeforeSave: false });
 
-const options = {
-  httpOnly: true,
-  secure: false, 
-  sameSite: "lax",
-};
+  const options = getCookieOptions();
 
-return res
-  .status(200)
-  .cookie("accessToken", accessToken, {
-    ...options,
-    maxAge: 15 * 60 * 1000,
-  })
-  .cookie("refreshToken", refreshToken, {
-    ...options,
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  })
-  .json({
-    success: true,
-    message: "Login successful",
-    user: {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    },
-    employee: employee
-      ? {
-          _id: employee._id,
-          empId: employee.empId,
-          department: employee.department,
-          designation: employee.designation,
-        }
-      : null,
-  });
+  return res
+    .status(200)
+    .cookie("accessToken", accessToken, {
+      ...options,
+      maxAge: 15 * 60 * 1000,
+    })
+    .cookie("refreshToken", refreshToken, {
+      ...options,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    })
+    .json({
+      success: true,
+      message: "Login successful",
+      user: serializeUser(user),
+      employee: serializeEmployee(employee),
+    });
 });
 
 // ==============================
 // LOGOUT USER
 // ==============================
-export const logoutUser = asyncHandler(async (req, res, next) => {
+export const logoutUser = asyncHandler(async (req, res) => {
   await User.findByIdAndUpdate(req.user.id, {
     refreshToken: null,
   });
 
-  return res.status(200).json({
-    success: true,
-    message: "Logout successful",
-  });
+  return res
+    .status(200)
+    .clearCookie("accessToken", getCookieOptions())
+    .clearCookie("refreshToken", getCookieOptions())
+    .json({
+      success: true,
+      message: "Logout successful",
+    });
 });
 
 // ==============================
@@ -189,7 +604,7 @@ export const getMe = asyncHandler(async (req, res, next) => {
 
   let employee = null;
 
-  if (user.role === "employee") {
+  if (EMPLOYEE_PROFILE_ROLES.includes(user.role)) {
     employee = await Employee.findOne({ user: user._id });
   }
 
@@ -199,3 +614,6 @@ export const getMe = asyncHandler(async (req, res, next) => {
     employee,
   });
 });
+
+
+

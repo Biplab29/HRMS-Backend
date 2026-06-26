@@ -22,7 +22,7 @@ const leaveSchema = new mongoose.Schema(
     toDate: {
       type: Date,
       required: [true, "To date is required"],
-      // ADVANCED: Custom validation to check if toDate is after fromDate
+      // Custom validation to check if toDate is after fromDate
       validate: {
         validator: function (value) {
           // 'this' refers to the current document being saved

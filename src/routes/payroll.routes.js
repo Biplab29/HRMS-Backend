@@ -8,27 +8,33 @@ import {
   deletePayroll,
 } from "../controllers/payroll.controller.js";
 
-import { verifyJWT } from "../middlewares/auth.middleware.js";
+
+import {
+  verifyJWT,
+  authorizeRoles,
+} from "../middlewares/auth.middleware.js";
 
 const PayrollRouter = express.Router();
 
-PayrollRouter.post("/add", verifyJWT, addPayroll);
+PayrollRouter.post("/add", verifyJWT, authorizeRoles("admin", "hr"), addPayroll);
 
 PayrollRouter.get("/", verifyJWT, getAllPayrolls);
 
 PayrollRouter.get("/:id", verifyJWT, getPayrollById);
 
-PayrollRouter.put("/:id", verifyJWT, updatePayroll);
+PayrollRouter.put("/:id", verifyJWT, authorizeRoles("admin", "hr"), updatePayroll);
 
 PayrollRouter.put(
   "/paid/:id",
   verifyJWT,
+  authorizeRoles("admin", "hr"),
   markPayrollPaid
 );
 
 PayrollRouter.delete(
   "/:id",
   verifyJWT,
+  authorizeRoles("admin", "hr"),
   deletePayroll
 );
 

@@ -6,13 +6,17 @@ import {
   updateDepartment,
   deleteDepartment,
 } from "../controllers/department.controller.js";
+import {
+  verifyJWT,
+  authorizeRoles,
+} from "../middlewares/auth.middleware.js";
 
 const DepartmentRouter = express.Router();
 
-DepartmentRouter.post("/add", addDepartment);
-DepartmentRouter.get("/", getAllDepartments);
-DepartmentRouter.get("/:id", getDepartmentById);
-DepartmentRouter.put("/:id", updateDepartment);
-DepartmentRouter.delete("/:id", deleteDepartment);
+DepartmentRouter.post("/add", verifyJWT, authorizeRoles("admin", "hr"), addDepartment);
+DepartmentRouter.get("/", verifyJWT, getAllDepartments);
+DepartmentRouter.get("/:id", verifyJWT, getDepartmentById);
+DepartmentRouter.put("/:id", verifyJWT, authorizeRoles("admin", "hr"), updateDepartment);
+DepartmentRouter.delete("/:id", verifyJWT, authorizeRoles("admin", "hr"), deleteDepartment);
 
 export default DepartmentRouter;

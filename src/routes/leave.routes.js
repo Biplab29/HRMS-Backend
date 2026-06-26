@@ -9,7 +9,10 @@ import {
   deleteLeave,
 } from "../controllers/leave.controller.js";
 
-import { verifyJWT } from "../middlewares/auth.middleware.js";
+import {
+  verifyJWT,
+  authorizeRoles,
+} from "../middlewares/auth.middleware.js";
 
 const LeaveRouter = express.Router();
 
@@ -24,18 +27,21 @@ LeaveRouter.put("/:id", verifyJWT, updateLeave);
 LeaveRouter.put(
   "/approve/:id",
   verifyJWT,
+  authorizeRoles("admin", "hr", "manager"),
   approveLeave
 );
 
 LeaveRouter.put(
   "/reject/:id",
   verifyJWT,
+  authorizeRoles("admin", "hr", "manager"),
   rejectLeave
 );
 
 LeaveRouter.delete(
   "/:id",
   verifyJWT,
+  authorizeRoles("admin"),
   deleteLeave
 );
 

@@ -1,7 +1,7 @@
 import { Attendance } from "../models/attendance.model.js";
 import { Employee } from "../models/employee.model.js";
 import ErrorHandler  from "../utils/ErrorHandler.js";
-import  asyncHandler  from "../utils/asyncHandler.js";
+import asyncHandler  from "../utils/asyncHandler.js";
 
 // Create Attendance
 export const addAttendance = asyncHandler(
@@ -61,7 +61,27 @@ export const addAttendance = asyncHandler(
 // Get All Attendance
 export const getAllAttendance =
   asyncHandler(async (req, res) => {
-    const attendance = await Attendance.find()
+    let query = {};
+
+    // Role-based attendance filtering
+    if (req.user.role !== "admin" && req.user.role !== "hr") {
+      const employeeRecord = await Employee.findOne({ user: req.user._id });
+      
+      if (req.user.role === "manager") {
+        // Manager can see their own attendance and attendance of employees they manage
+        const managedEmployees = await Employee.find({ manager: employeeRecord?._id }).select("_id");
+        const employeeIds = managedEmployees.map(emp => emp._id);
+        if (employeeRecord) {
+          employeeIds.push(employeeRecord._id);
+        }
+        query = { employee: { $in: employeeIds } };
+      } else {
+        // Normal employee sees only their own attendance
+        query = { employee: employeeRecord?._id || null };
+      }
+    }
+
+    const attendance = await Attendance.find(query)
       .populate(
         "employee",
         "employeeId phone"
@@ -162,16 +182,27 @@ export const deleteAttendance =
     });
   });
 
-  export const checkIn = asyncHandler(
+export const checkIn = asyncHandler(
   async (req, res, next) => {
-    const { employee } = req.body;
+    let targetEmployeeId = req.body.employee;
+
+    // Secure: If user is employee, or if employee is not specified in body, resolve from logged in user's profile
+    if (req.user.role === "employee" || !targetEmployeeId) {
+      const employeeRecord = await Employee.findOne({ user: req.user._id });
+      if (!employeeRecord) {
+        return next(
+          new ErrorHandler("Employee profile not found for this user", 404)
+        );
+      }
+      targetEmployeeId = employeeRecord._id;
+    }
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const attendance =
       await Attendance.findOne({
-        employee,
+        employee: targetEmployeeId,
         date: today,
       });
 
@@ -186,7 +217,7 @@ export const deleteAttendance =
 
     const newAttendance =
       await Attendance.create({
-        employee,
+        employee: targetEmployeeId,
         date: today,
         checkIn: new Date(),
         status: "present",
@@ -202,14 +233,25 @@ export const deleteAttendance =
 
 export const checkOut = asyncHandler(
   async (req, res, next) => {
-    const { employee } = req.body;
+    let targetEmployeeId = req.body.employee;
+
+    // Secure: If user is employee, or if employee is not specified in body, resolve from logged in user's profile
+    if (req.user.role === "employee" || !targetEmployeeId) {
+      const employeeRecord = await Employee.findOne({ user: req.user._id });
+      if (!employeeRecord) {
+        return next(
+          new ErrorHandler("Employee profile not found for this user", 404)
+        );
+      }
+      targetEmployeeId = employeeRecord._id;
+    }
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const attendance =
       await Attendance.findOne({
-        employee,
+        employee: targetEmployeeId,
         date: today,
       });
 

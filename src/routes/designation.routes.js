@@ -6,13 +6,17 @@ import {
   updateDesignation,
   deleteDesignation,
 } from "../controllers/designation.controller.js";
+import {
+  verifyJWT,
+  authorizeRoles,
+} from "../middlewares/auth.middleware.js";
 
 const DesignationRouter = express.Router();
 
-DesignationRouter.post("/add", addDesignation);
-DesignationRouter.get("/", getAllDesignations);
-DesignationRouter.get("/:id", getDesignationById);
-DesignationRouter.put("/:id", updateDesignation);
-DesignationRouter.delete("/:id", deleteDesignation);
+DesignationRouter.post("/add", verifyJWT, authorizeRoles("admin", "hr"), addDesignation);
+DesignationRouter.get("/", verifyJWT, getAllDesignations);
+DesignationRouter.get("/:id", verifyJWT, getDesignationById);
+DesignationRouter.put("/:id", verifyJWT, authorizeRoles("admin", "hr"), updateDesignation);
+DesignationRouter.delete("/:id", verifyJWT, authorizeRoles("admin", "hr"), deleteDesignation);
 
 export default DesignationRouter;

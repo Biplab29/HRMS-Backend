@@ -72,7 +72,15 @@ export const addPayroll = asyncHandler(
 // Get All Payrolls
 export const getAllPayrolls =
   asyncHandler(async (req, res) => {
-    const payrolls = await Payroll.find()
+    let query = {};
+
+    // Role-based payroll filtering
+    if (req.user.role !== "admin" && req.user.role !== "hr") {
+      const employeeRecord = await Employee.findOne({ user: req.user._id });
+      query = { employee: employeeRecord?._id || null };
+    }
+
+    const payrolls = await Payroll.find(query)
       .populate(
         "employee",
         "employeeId phone"

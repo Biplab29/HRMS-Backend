@@ -2,6 +2,17 @@ import { Employee } from "../models/employee.model.js";
 import { User } from "../models/user.model.js";
 import ErrorHandler from "../utils/ErrorHandler.js";
 import asyncHandler from "../utils/asyncHandler.js";
+import { generateUniqueEmployeeId } from "../utils/generateEmployeeId.js";
+
+const isBlank = (value) =>
+  value === undefined || value === null || String(value).trim() === "";
+
+const optionalValue = (value) => (isBlank(value) ? undefined : value);
+
+const compactObject = (value) =>
+  Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
+  );
 
 // ADD EMPLOYEE
 // export const addEmployee = asyncHandler(async (req, res, next) => {
@@ -68,9 +79,8 @@ import asyncHandler from "../utils/asyncHandler.js";
 //     employee,
 //   });
 // });
-export const addEmployee = asyncHandler(async (req, res, next) => {
-  console.log("BODY =>", req.body);
 
+export const addEmployee = asyncHandler(async (req, res, next) => {
   if (!req.body) {
     return next(
       new ErrorHandler(
@@ -94,10 +104,10 @@ export const addEmployee = asyncHandler(async (req, res, next) => {
     profileImage,
   } = req.body;
 
-  if (!user || !phone || !department || !designation) {
+  if (!user || !department || !designation) {
     return next(
       new ErrorHandler(
-        "User, phone, department and designation are required",
+        "User, department and designation are required",
         400
       )
     );
@@ -120,42 +130,24 @@ export const addEmployee = asyncHandler(async (req, res, next) => {
     );
   }
 
-  // Generate Unique Employee ID
-  let employeeId;
-  let isUnique = false;
+  const employeeId = await generateUniqueEmployeeId();
 
-  while (!isUnique) {
-    const year = new Date().getFullYear();
-    const randomNumber = Math.floor(
-      1000 + Math.random() * 9000
-    );
-
-    employeeId = `HRM-${year}-${randomNumber}`;
-
-    const existingEmployee = await Employee.findOne({
-      employeeId,
-    });
-
-    if (!existingEmployee) {
-      isUnique = true;
-    }
-  }
-
-  const employee = await Employee.create({
+  const employee = await Employee.create(compactObject({
     user,
     employeeId,
-    phone,
-    gender,
-    dateOfBirth,
+    phone: optionalValue(phone),
+    gender: optionalValue(gender),
+    dateOfBirth: optionalValue(dateOfBirth),
     address,
     department,
     designation,
-    manager,
-    joiningDate,
-    employmentType,
-    salary,
-    profileImage,
-  });
+    manager: optionalValue(manager),
+    joiningDate: optionalValue(joiningDate),
+    employmentType: optionalValue(employmentType),
+    salary: optionalValue(salary),
+    profileImage: optionalValue(profileImage),
+    onboardingCompleted: false,
+  }));
 
   return res.status(201).json({
     success: true,
@@ -164,12 +156,122 @@ export const addEmployee = asyncHandler(async (req, res, next) => {
   });
 });
 
+// Employee completes their own onboarding profile after accepting invite.
+export const completeOnboarding = asyncHandler(async (req, res, next) => {
+  const employee = await Employee.findOne({ user: req.user._id });
+
+  if (!employee) {
+    return next(new ErrorHandler("Employee profile not found", 404));
+  }
+
+  const allowedFields = [
+    "phone",
+    "gender",
+    "dateOfBirth",
+    "bloodGroup",
+    "address",
+    "emergencyContact",
+    "bankDetails",
+    "profileImage",
+  ];
+
+  const updates = {};
+
+  allowedFields.forEach((field) => {
+    if (req.body[field] !== undefined) {
+      updates[field] = req.body[field];
+    }
+  });
+
+  if (!employee.phone && !updates.phone) {
+    return next(
+      new ErrorHandler("Phone is required to complete onboarding", 400)
+    );
+  }
+
+  updates.onboardingCompleted = true;
+
+  const updatedEmployee = await Employee.findOneAndUpdate(
+    { user: req.user._id },
+    updates,
+    {
+      new: true,
+      runValidators: true,
+    }
+  )
+    .populate("user", "name email role isActive")
+    .populate("department", "departmentName")
+    .populate("designation", "title");
+
+  return res.status(200).json({
+    success: true,
+    message: "Onboarding completed successfully",
+    employee: updatedEmployee,
+  });
+});
+
+// Employee updates their own profile from settings
+export const updateOwnProfile = asyncHandler(async (req, res, next) => {
+  const employee = await Employee.findOne({ user: req.user._id });
+
+  if (!employee) {
+    return next(new ErrorHandler("Employee profile not found", 404));
+  }
+
+  const allowedFields = [
+    "phone",
+    "gender",
+    "dateOfBirth",
+    "bloodGroup",
+    "address",
+    "emergencyContact",
+    "bankDetails",
+    "profileImage",
+  ];
+
+  const updates = {};
+
+  allowedFields.forEach((field) => {
+    if (req.body[field] !== undefined) {
+      updates[field] = req.body[field];
+    }
+  });
+
+  const updatedEmployee = await Employee.findOneAndUpdate(
+    { user: req.user._id },
+    updates,
+    {
+      new: true,
+      runValidators: true,
+    }
+  )
+    .populate("user", "name email role isActive")
+    .populate("department", "departmentName")
+    .populate("designation", "title");
+
+  return res.status(200).json({
+    success: true,
+    message: "Profile updated successfully",
+    employee: updatedEmployee,
+  });
+});
+
 // GET ALL EMPLOYEES
 export const getEmployees = asyncHandler(async (req, res) => {
-  const employees = await Employee.find()
+  let query = {};
+  if (req.user.role === "manager") {
+    const employeeRecord = await Employee.findOne({ user: req.user._id });
+    if (employeeRecord) {
+      query = { manager: employeeRecord._id };
+    } else {
+      query = { _id: null }; // return nothing if no profile
+    }
+  }
+
+  const employees = await Employee.find(query)
     .populate("user", "name email role isActive")
-    .populate("department", "name")
-    .populate("designation", "name")
+    .populate("department", "departmentName")
+    .populate("designation", "title")
     .populate({
       path: "manager",
       select: "employeeId user",
@@ -191,8 +293,8 @@ export const getEmployees = asyncHandler(async (req, res) => {
 export const getSingleEmployee = asyncHandler(async (req, res, next) => {
   const employee = await Employee.findById(req.params.id)
     .populate("user", "name email role isActive")
-    .populate("department", "name")
-    .populate("designation", "name")
+    .populate("department", "departmentName")
+    .populate("designation", "title")
     .populate({
       path: "manager",
       select: "employeeId user",
@@ -225,8 +327,8 @@ export const updateEmployee = asyncHandler(async (req, res, next) => {
     runValidators: true,
   })
     .populate("user", "name email role isActive")
-    .populate("department", "name")
-    .populate("designation", "name");
+    .populate("department", "departmentName")
+    .populate("designation", "title");
 
   res.status(200).json({
     success: true,

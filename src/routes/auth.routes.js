@@ -1,7 +1,10 @@
 import express from "express";
 
 import {
+  bootstrapAdmin,
   registerUser,
+  verifyInvite,
+  acceptInvite,
   loginUser,
   logoutUser,
   getMe,
@@ -14,9 +17,27 @@ import {
 
 const Authrouter = express.Router();
 
+// Creates the first admin only when the database has no users.
+Authrouter.post("/bootstrap-admin", bootstrapAdmin);
 
-// Register
-Authrouter.post("/register", registerUser);
+// Admin/HR creates a no-password user and sends the invite email.
+Authrouter.post(
+  "/register",
+  verifyJWT,
+  authorizeRoles("admin", "hr"),
+  registerUser
+);
+
+Authrouter.post(
+  "/invite",
+  verifyJWT,
+  authorizeRoles("admin", "hr"),
+  registerUser
+);
+
+// Employee accepts invite link and sets their first password.
+Authrouter.get("/invite/verify", verifyInvite);
+Authrouter.post("/accept-invite", acceptInvite);
 
 // Login
 Authrouter.post("/login", loginUser);
