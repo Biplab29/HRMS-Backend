@@ -30,18 +30,10 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      console.log("Request Origin:", origin);
-
-      // Allow Postman, mobile apps, server-to-server requests
-      if (!origin) {
+      if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ""))) {
         return callback(null, true);
       }
-
-      if (allowedOrigins.includes(origin.replace(/\/$/, ""))) {
-        return callback(null, true);
-      }
-
-      return callback(new Error(`CORS blocked for origin: ${origin}`));
+      return callback(null, false);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
