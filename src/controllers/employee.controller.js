@@ -3,6 +3,7 @@ import { User } from "../models/user.model.js";
 import ErrorHandler from "../utils/ErrorHandler.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { generateUniqueEmployeeId } from "../utils/generateEmployeeId.js";
+import { uploadToCloudinary } from "../utils/cloudinary.js";
 
 const isBlank = (value) =>
   value === undefined || value === null || String(value).trim() === "";
@@ -132,6 +133,15 @@ export const addEmployee = asyncHandler(async (req, res, next) => {
 
   const employeeId = await generateUniqueEmployeeId();
 
+  let profileImageUrl = optionalValue(profileImage);
+  if (req.file) {
+    try {
+      profileImageUrl = await uploadToCloudinary(req.file.buffer, "hrms/avatars");
+    } catch (err) {
+      return next(new ErrorHandler("Failed to upload profile image to Cloudinary", 500));
+    }
+  }
+
   const employee = await Employee.create(compactObject({
     user,
     employeeId,
@@ -145,9 +155,13 @@ export const addEmployee = asyncHandler(async (req, res, next) => {
     joiningDate: optionalValue(joiningDate),
     employmentType: optionalValue(employmentType),
     salary: optionalValue(salary),
-    profileImage: optionalValue(profileImage),
+    profileImage: profileImageUrl,
     onboardingCompleted: false,
   }));
+
+  if (profileImageUrl) {
+    await User.findByIdAndUpdate(user, { profileImage: profileImageUrl });
+  }
 
   return res.status(201).json({
     success: true,
@@ -189,6 +203,14 @@ export const completeOnboarding = asyncHandler(async (req, res, next) => {
     );
   }
 
+  if (req.file) {
+    try {
+      updates.profileImage = await uploadToCloudinary(req.file.buffer, "hrms/avatars");
+    } catch (err) {
+      return next(new ErrorHandler("Failed to upload profile image to Cloudinary", 500));
+    }
+  }
+
   updates.onboardingCompleted = true;
 
   const updatedEmployee = await Employee.findOneAndUpdate(
@@ -199,9 +221,13 @@ export const completeOnboarding = asyncHandler(async (req, res, next) => {
       runValidators: true,
     }
   )
-    .populate("user", "name email role isActive")
+    .populate("user", "name email role isActive profileImage")
     .populate("department", "departmentName")
     .populate("designation", "title");
+
+  if (updates.profileImage) {
+    await User.findByIdAndUpdate(req.user._id, { profileImage: updates.profileImage });
+  }
 
   return res.status(200).json({
     success: true,
@@ -237,6 +263,14 @@ export const updateOwnProfile = asyncHandler(async (req, res, next) => {
     }
   });
 
+  if (req.file) {
+    try {
+      updates.profileImage = await uploadToCloudinary(req.file.buffer, "hrms/avatars");
+    } catch (err) {
+      return next(new ErrorHandler("Failed to upload profile image to Cloudinary", 500));
+    }
+  }
+
   const updatedEmployee = await Employee.findOneAndUpdate(
     { user: req.user._id },
     updates,
@@ -245,9 +279,13 @@ export const updateOwnProfile = asyncHandler(async (req, res, next) => {
       runValidators: true,
     }
   )
-    .populate("user", "name email role isActive")
+    .populate("user", "name email role isActive profileImage")
     .populate("department", "departmentName")
     .populate("designation", "title");
+
+  if (updates.profileImage) {
+    await User.findByIdAndUpdate(req.user._id, { profileImage: updates.profileImage });
+  }
 
   return res.status(200).json({
     success: true,
@@ -261,15 +299,15 @@ export const getEmployees = asyncHandler(async (req, res) => {
   let query = {};
   if (req.user.role === "manager") {
     const employeeRecord = await Employee.findOne({ user: req.user._id });
-    if (employeeRecord) {
-      query = { manager: employeeRecord._id };
+    if (employeeRecord && employeeRecord.department) {
+      query = { department: employeeRecord.department };
     } else {
-      query = { _id: null }; // return nothing if no profile
+      query = { _id: null }; // return nothing if no profile or department
     }
   }
 
   const employees = await Employee.find(query)
-    .populate("user", "name email role isActive")
+    .populate("user", "name email role isActive profileImage")
     .populate("department", "departmentName")
     .populate("designation", "title")
     .populate({
@@ -277,7 +315,7 @@ export const getEmployees = asyncHandler(async (req, res) => {
       select: "employeeId user",
       populate: {
         path: "user",
-        select: "name email",
+        select: "name email profileImage",
       },
     })
     .sort({ createdAt: -1 });
@@ -292,7 +330,7 @@ export const getEmployees = asyncHandler(async (req, res) => {
 // GET SINGLE EMPLOYEE
 export const getSingleEmployee = asyncHandler(async (req, res, next) => {
   const employee = await Employee.findById(req.params.id)
-    .populate("user", "name email role isActive")
+    .populate("user", "name email role isActive profileImage")
     .populate("department", "departmentName")
     .populate("designation", "title")
     .populate({
@@ -300,7 +338,7 @@ export const getSingleEmployee = asyncHandler(async (req, res, next) => {
       select: "employeeId user",
       populate: {
         path: "user",
-        select: "name email",
+        select: "name email profileImage",
       },
     });
 
@@ -322,13 +360,25 @@ export const updateEmployee = asyncHandler(async (req, res, next) => {
     return next(new ErrorHandler("Employee not found", 404));
   }
 
+  if (req.file) {
+    try {
+      req.body.profileImage = await uploadToCloudinary(req.file.buffer, "hrms/avatars");
+    } catch (err) {
+      return next(new ErrorHandler("Failed to upload profile image to Cloudinary", 500));
+    }
+  }
+
   employee = await Employee.findByIdAndUpdate(req.params.id, req.body, {
     new: true,
     runValidators: true,
   })
-    .populate("user", "name email role isActive")
+    .populate("user", "name email role isActive profileImage")
     .populate("department", "departmentName")
     .populate("designation", "title");
+
+  if (req.body.profileImage) {
+    await User.findByIdAndUpdate(employee.user, { profileImage: req.body.profileImage });
+  }
 
   res.status(200).json({
     success: true,

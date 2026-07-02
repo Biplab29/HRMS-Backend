@@ -8,23 +8,27 @@ import {
   loginUser,
   logoutUser,
   getMe,
+  forgotPassword,
+  resetPassword,
 } from "../controllers/auth.controller.js";
 
 import {
   verifyJWT,
   authorizeRoles,
 } from "../middlewares/auth.middleware.js";
+import { upload } from "../middlewares/upload.middleware.js";
 
 const Authrouter = express.Router();
 
 // Creates the first admin only when the database has no users.
-Authrouter.post("/bootstrap-admin", bootstrapAdmin);
+Authrouter.post("/bootstrap-admin", upload.single("profileImage"), bootstrapAdmin);
 
 // Admin/HR creates a no-password user and sends the invite email.
 Authrouter.post(
   "/register",
   verifyJWT,
   authorizeRoles("admin", "hr"),
+  upload.single("profileImage"),
   registerUser
 );
 
@@ -32,6 +36,7 @@ Authrouter.post(
   "/invite",
   verifyJWT,
   authorizeRoles("admin", "hr"),
+  upload.single("profileImage"),
   registerUser
 );
 
@@ -41,6 +46,10 @@ Authrouter.post("/accept-invite", acceptInvite);
 
 // Login
 Authrouter.post("/login", loginUser);
+
+// Password Reset
+Authrouter.post("/forgot-password", forgotPassword);
+Authrouter.post("/reset-password", resetPassword);
 
 // ==============================
 // PROTECTED ROUTES

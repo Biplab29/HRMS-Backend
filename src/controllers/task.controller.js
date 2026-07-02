@@ -22,10 +22,12 @@ export const createTask = asyncHandler(async (req, res, next) => {
     return next(new ErrorHandler("Assignee not found", 404));
   }
 
-  // Allow admins and HR to assign to anyone. Managers can only assign to subordinates.
+  // Allow admins and HR to assign to anyone. Managers can only assign to department members.
   if (req.user.role === "manager") {
-    if (assigneeEmployee.manager?.toString() !== assignerEmployee._id.toString()) {
-      return next(new ErrorHandler("You can only assign tasks to your subordinates", 403));
+    const sameDept = assigneeEmployee.department?.toString() === assignerEmployee.department?.toString();
+    const isSubordinate = assigneeEmployee.manager?.toString() === assignerEmployee._id.toString();
+    if (!sameDept && !isSubordinate) {
+      return next(new ErrorHandler("You can only assign tasks to employees in your department", 403));
     }
   }
 
@@ -124,9 +126,9 @@ export const getTasks = asyncHandler(async (req, res) => {
   if (req.user.role === "employee") {
     query = { assignedTo: employeeRecord?._id || null };
   } else if (req.user.role === "manager") {
-    // Managers see tasks they assigned, and tasks assigned to their subordinates
-    const managedEmployees = await Employee.find({ manager: employeeRecord?._id }).select("_id");
-    const employeeIds = managedEmployees.map(emp => emp._id);
+    // Managers see tasks they assigned, and tasks assigned to employees in their department
+    const deptEmployees = await Employee.find({ department: employeeRecord?.department }).select("_id");
+    const employeeIds = deptEmployees.map(emp => emp._id);
     
     query = {
       $or: [

@@ -68,10 +68,10 @@ export const getAllAttendance =
       const employeeRecord = await Employee.findOne({ user: req.user._id });
       
       if (req.user.role === "manager") {
-        // Manager can see their own attendance and attendance of employees they manage
-        const managedEmployees = await Employee.find({ manager: employeeRecord?._id }).select("_id");
-        const employeeIds = managedEmployees.map(emp => emp._id);
-        if (employeeRecord) {
+        // Manager can see their own attendance and attendance of employees in their department
+        const deptEmployees = await Employee.find({ department: employeeRecord?.department }).select("_id");
+        const employeeIds = deptEmployees.map(emp => emp._id);
+        if (employeeRecord && !employeeIds.some(id => id.toString() === employeeRecord._id.toString())) {
           employeeIds.push(employeeRecord._id);
         }
         query = { employee: { $in: employeeIds } };

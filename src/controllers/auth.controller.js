@@ -8,6 +8,7 @@ import ErrorHandler from "../utils/ErrorHandler.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { generateUniqueEmployeeId } from "../utils/generateEmployeeId.js";
 import { sendEmail } from "../utils/sendEmail.js";
+import { uploadToCloudinary } from "../utils/cloudinary.js";
 
 const EMPLOYEE_PROFILE_ROLES = ["employee", "manager"];
 const USER_ROLES = ["admin", "hr", "manager", "employee"];
@@ -171,6 +172,7 @@ const serializeUser = (user) => ({
   email: user.email,
   role: user.role,
   isActive: user.isActive,
+  profileImage: user.profileImage,
 });
 
 const serializeEmployee = (employee) => {
@@ -182,6 +184,7 @@ const serializeEmployee = (employee) => {
     department: employee.department,
     designation: employee.designation,
     onboardingCompleted: employee.onboardingCompleted,
+    profileImage: employee.profileImage,
   };
 };
 
@@ -257,12 +260,22 @@ export const bootstrapAdmin = asyncHandler(async (req, res, next) => {
     return next(new ErrorHandler("Password confirmation does not match", 400));
   }
 
+  let profileImageUrl = null;
+  if (req.file) {
+    try {
+      profileImageUrl = await uploadToCloudinary(req.file.buffer, "hrms/avatars");
+    } catch (err) {
+      return next(new ErrorHandler("Failed to upload profile image to Cloudinary", 500));
+    }
+  }
+
   const user = await User.create({
     name: String(name).trim(),
     email: String(email).trim().toLowerCase(),
     password,
     role: "admin",
     isActive: true,
+    profileImage: profileImageUrl,
   });
 
   const accessToken = user.generateAccessToken();
@@ -322,6 +335,11 @@ export const registerUser = asyncHandler(async (req, res, next) => {
     return next(new ErrorHandler("Invalid user role", 400));
   }
 
+  // Restrict Admin/HR role creation to Admins only
+  if ((normalizedRole === "admin" || normalizedRole === "hr") && req.user.role !== "admin") {
+    return next(new ErrorHandler("Only administrators can create Admin or HR Manager accounts", 403));
+  }
+
   let employeeInvitePayload = null;
 
   if (EMPLOYEE_PROFILE_ROLES.includes(normalizedRole)) {
@@ -341,11 +359,21 @@ export const registerUser = asyncHandler(async (req, res, next) => {
     return next(new ErrorHandler("User already exists", 400));
   }
 
+  // let profileImageUrl = null;
+  // if (req.file) {
+  //   try {
+  //     profileImageUrl = await uploadToCloudinary(req.file.buffer, "hrms/avatars");
+  //   } catch (err) {
+  //     return next(new ErrorHandler("Failed to upload profile image to Cloudinary", 500));
+  //   }
+  // }
+
   const user = new User({
     name: normalizedName,
     email: normalizedEmail,
     role: normalizedRole,
     isActive: false,
+    // profileImage: profileImageUrl,
   });
 
   const inviteToken = user.generateInviteToken();
@@ -361,6 +389,7 @@ export const registerUser = asyncHandler(async (req, res, next) => {
         user: user._id,
         employeeId,
         ...employeeInvitePayload,
+        // profileImage: profileImageUrl,
         onboardingCompleted: false,
       }));
     } catch (error) {
@@ -486,6 +515,26 @@ export const acceptInvite = asyncHandler(async (req, res, next) => {
   });
 });
 
+const ensureEmployeeProfileExists = async (user) => {
+  let employee = await Employee.findOne({ user: user._id });
+  if (!employee && EMPLOYEE_PROFILE_ROLES.includes(user.role)) {
+    const employeeId = await generateUniqueEmployeeId();
+    const defaultDept = await Department.findOne({ isActive: { $ne: false } });
+    const defaultDesg = await Designation.findOne({ isActive: { $ne: false } });
+    employee = await Employee.create({
+      user: user._id,
+      employeeId,
+      department: defaultDept?._id,
+      designation: defaultDesg?._id,
+      joiningDate: new Date(),
+      employmentType: "full-time",
+      status: "active",
+      onboardingCompleted: false,
+    });
+  }
+  return employee;
+};
+
 // ==============================
 // LOGIN USER
 // ==============================
@@ -541,8 +590,8 @@ export const loginUser = asyncHandler(async (req, res, next) => {
     );
   }
 
-  if (!employee && EMPLOYEE_PROFILE_ROLES.includes(user.role)) {
-    employee = await Employee.findOne({ user: user._id });
+  if (EMPLOYEE_PROFILE_ROLES.includes(user.role)) {
+    employee = await ensureEmployeeProfileExists(user);
   }
 
   const accessToken = user.generateAccessToken();
@@ -605,13 +654,115 @@ export const getMe = asyncHandler(async (req, res, next) => {
   let employee = null;
 
   if (EMPLOYEE_PROFILE_ROLES.includes(user.role)) {
-    employee = await Employee.findOne({ user: user._id });
+    employee = await ensureEmployeeProfileExists(user);
   }
 
   return res.status(200).json({
     success: true,
     user,
     employee,
+  });
+});
+
+// ==============================
+// FORGOT PASSWORD
+// ==============================
+export const forgotPassword = asyncHandler(async (req, res, next) => {
+  const { email } = req.body;
+  if (!email) {
+    return next(new ErrorHandler("Email is required", 400));
+  }
+  const user = await User.findOne({ email: email.trim().toLowerCase() });
+  if (!user) {
+    return res.status(200).json({
+      success: true,
+      message: "If that email is registered, a password reset link has been sent.",
+    });
+  }
+
+  const resetToken = crypto.randomBytes(20).toString("hex");
+  user.passwordResetToken = crypto
+    .createHash("sha256")
+    .update(resetToken)
+    .digest("hex");
+  user.passwordResetExpiry = Date.now() + 15 * 60 * 1000;
+
+  await user.save({ validateBeforeSave: false });
+
+  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+  const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
+  
+  const message = `You requested a password reset. Please click on the link below to reset your password:\n\n${resetUrl}\n\nThis link is valid for 15 minutes. If you did not request this, please ignore this email.`;
+
+  const html = `
+    <div style="font-family: sans-serif; padding: 20px; color: #333; background-color: #fafafa; border: 1px solid #eee; border-radius: 10px; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #25c979;">Password Reset Request</h2>
+      <p>You requested a password reset for your PeopleGrid account. Click the button below to choose a new password:</p>
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${resetUrl}" style="display: inline-block; background-color: #25c979; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 15px;">Reset Password</a>
+      </div>
+      <p>This link is valid for 15 minutes.</p>
+      <p style="color: #666; font-size: 13px;">If the button doesn't work, copy and paste this link in your browser:</p>
+      <p style="background-color: #f0f0f0; padding: 10px; border-radius: 5px; word-break: break-all; font-family: monospace; font-size: 12px;">${resetUrl}</p>
+      <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+      <p style="font-size: 11px; color: #999; text-align: center;">This is an automated system email. Please do not reply directly.</p>
+    </div>
+  `;
+
+  try {
+    await sendEmail({
+      to: user.email,
+      subject: "PeopleGrid - Password Reset Request",
+      text: message,
+      html
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: "If that email is registered, a password reset link has been sent.",
+    });
+  } catch (error) {
+    user.passwordResetToken = undefined;
+    user.passwordResetExpiry = undefined;
+    await user.save({ validateBeforeSave: false });
+    return next(new ErrorHandler("Email could not be sent", 500));
+  }
+});
+
+// ==============================
+// RESET PASSWORD
+// ==============================
+export const resetPassword = asyncHandler(async (req, res, next) => {
+  const { token, password, confirmPassword } = req.body;
+  if (!token || !password) {
+    return next(new ErrorHandler("Token and password are required", 400));
+  }
+  if (password !== confirmPassword) {
+    return next(new ErrorHandler("Passwords do not match", 400));
+  }
+
+  const hashedToken = crypto
+    .createHash("sha256")
+    .update(token)
+    .digest("hex");
+
+  const user = await User.findOne({
+    passwordResetToken: hashedToken,
+    passwordResetExpiry: { $gt: Date.now() },
+  });
+
+  if (!user) {
+    return next(new ErrorHandler("Invalid or expired reset token", 400));
+  }
+
+  user.password = password;
+  user.passwordResetToken = undefined;
+  user.passwordResetExpiry = undefined;
+  await user.save();
+
+  res.status(200).json({
+    success: true,
+    message: "Password reset successful. Please login with your new password.",
   });
 });
 
