@@ -19,10 +19,8 @@ dotenv.config({});
 
 const app = express();
 
-const allowedOrigins = (
-  process.env.CORS_ORIGIN ||
-  process.env.FRONTEND_URL ||
-  "http://localhost:5173"
+const allowedOrigins = ("https://hrms-front-phi.vercel.app",
+  "http://localhost:5173" 
 )
   .split(",")
   .map((origin) => origin.trim().replace(/\/$/, ""))
