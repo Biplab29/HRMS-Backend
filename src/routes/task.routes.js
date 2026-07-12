@@ -3,6 +3,8 @@ import {
   createTask,
   updateTaskStatus,
   getTasks,
+  deleteTask,
+  editTask,
 } from "../controllers/task.controller.js";
 
 import {
@@ -29,6 +31,18 @@ TaskRouter.get(
   "/",
   verifyJWT,
   getTasks
+);
+
+TaskRouter.delete(
+  "/:id",
+  verifyJWT,
+  deleteTask
+);
+
+TaskRouter.put(
+  "/:id",
+  verifyJWT,
+  editTask
 );
 
 export default TaskRouter;

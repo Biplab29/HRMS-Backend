@@ -27,32 +27,38 @@ export const sendEmail = async ({ to, subject, text, html }) => {
     };
   }
 
-  const transporter = nodemailer.createTransport({
-    host,
-    port: Number(port),
-    secure,
-    auth: {
-      user,
-      pass,
-    },
-  });
-
   try {
+    const transporter = nodemailer.createTransport({
+      host,
+      port: Number(port),
+      secure: Number(port) === 465 || secure,
+      auth: {
+        user,
+        pass,
+      },
+      tls: {
+        rejectUnauthorized: false,
+      },
+    });
+
+    const fromAddress = host.includes("gmail.com") ? `HRMS <${user}>` : (EMAIL_FROM || user);
+
     await transporter.sendMail({
-      from: EMAIL_FROM || user,
+      from: fromAddress,
       to,
       subject,
       text,
       html,
     });
+
+    return {
+      sent: true,
+    };
   } catch (error) {
+    console.error("Nodemailer SMTP execution error:", error);
     return {
       sent: false,
       reason: error.message,
     };
   }
-
-  return {
-    sent: true,
-  };
 };

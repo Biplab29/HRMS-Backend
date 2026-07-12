@@ -50,6 +50,13 @@ const leaveSchema = new mongoose.Schema(
       ref: "Employee",
       default: null,
     },
+
+    rejectionReason: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: [500, "Rejection reason cannot exceed 500 characters"],
+    },
   },
   {
     timestamps: true

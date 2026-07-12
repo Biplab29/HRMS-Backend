@@ -3,6 +3,8 @@ import { Employee } from "../models/employee.model.js";
 import { Notification } from "../models/notification.model.js";
 import ErrorHandler from "../utils/ErrorHandler.js";
 import asyncHandler from "../utils/asyncHandler.js";
+import { Department } from "../models/department.model.js";
+import { Designation } from "../models/designation.model.js";
 
 // Create Task
 export const createTask = asyncHandler(async (req, res, next) => {
@@ -12,9 +14,29 @@ export const createTask = asyncHandler(async (req, res, next) => {
     return next(new ErrorHandler("All fields are required", 400));
   }
 
-  const assignerEmployee = await Employee.findOne({ user: req.user._id });
+  let assignerEmployee = await Employee.findOne({ user: req.user._id });
   if (!assignerEmployee) {
-    return next(new ErrorHandler("Manager profile not found", 404));
+    if (req.user.role === "admin" || req.user.role === "hr") {
+      let dept = await Department.findOne();
+      if (!dept) {
+        dept = await Department.create({ departmentName: "Administration" });
+      }
+      let desg = await Designation.findOne({ department: dept._id });
+      if (!desg) {
+        desg = await Designation.create({ title: "Executive", department: dept._id });
+      }
+
+      assignerEmployee = await Employee.create({
+        user: req.user._id,
+        employeeId: `${req.user.role.toUpperCase().slice(0, 3)}-${Math.floor(1000 + Math.random() * 9000)}`,
+        department: dept._id,
+        designation: desg._id,
+        joiningDate: new Date(),
+        onboardingCompleted: true,
+      });
+    } else {
+      return next(new ErrorHandler("Manager profile not found", 404));
+    }
   }
 
   const assigneeEmployee = await Employee.findById(assignedTo).populate("user");
@@ -71,9 +93,29 @@ export const updateTaskStatus = asyncHandler(async (req, res, next) => {
     return next(new ErrorHandler("Invalid status update", 400));
   }
 
-  const currentEmployee = await Employee.findOne({ user: req.user._id });
+  let currentEmployee = await Employee.findOne({ user: req.user._id });
   if (!currentEmployee) {
-    return next(new ErrorHandler("Employee profile not found", 404));
+    if (req.user.role === "admin" || req.user.role === "hr") {
+      let dept = await Department.findOne();
+      if (!dept) {
+        dept = await Department.create({ departmentName: "Administration" });
+      }
+      let desg = await Designation.findOne({ department: dept._id });
+      if (!desg) {
+        desg = await Designation.create({ title: "Executive", department: dept._id });
+      }
+
+      currentEmployee = await Employee.create({
+        user: req.user._id,
+        employeeId: `${req.user.role.toUpperCase().slice(0, 3)}-${Math.floor(1000 + Math.random() * 9000)}`,
+        department: dept._id,
+        designation: desg._id,
+        joiningDate: new Date(),
+        onboardingCompleted: true,
+      });
+    } else {
+      return next(new ErrorHandler("Employee profile not found", 404));
+    }
   }
 
   if (task.assignedTo.toString() !== currentEmployee._id.toString()) {
@@ -159,5 +201,80 @@ export const getTasks = asyncHandler(async (req, res) => {
     success: true,
     count: tasks.length,
     tasks,
+  });
+});
+
+// Delete Task
+export const deleteTask = asyncHandler(async (req, res, next) => {
+  const task = await Task.findById(req.params.id);
+
+  if (!task) {
+    return next(new ErrorHandler("Task not found", 404));
+  }
+
+  const currentEmployee = await Employee.findOne({ user: req.user._id });
+  const isAdminOrHr = req.user.role === "admin" || req.user.role === "hr";
+  const isAssigner = currentEmployee && task.assignedBy.toString() === currentEmployee._id.toString();
+
+  if (!isAdminOrHr && !isAssigner) {
+    return next(new ErrorHandler("You are not authorized to delete this task", 403));
+  }
+
+  await task.deleteOne();
+
+  res.status(200).json({
+    success: true,
+    message: "Task deleted successfully",
+  });
+});
+
+// Edit Task
+export const editTask = asyncHandler(async (req, res, next) => {
+  const { title, description, assignedTo, deadline } = req.body;
+  const task = await Task.findById(req.params.id);
+
+  if (!task) {
+    return next(new ErrorHandler("Task not found", 404));
+  }
+
+  const currentEmployee = await Employee.findOne({ user: req.user._id });
+  const isAdminOrHr = req.user.role === "admin" || req.user.role === "hr";
+  const isAssigner = currentEmployee && task.assignedBy.toString() === currentEmployee._id.toString();
+
+  if (!isAdminOrHr && !isAssigner) {
+    return next(new ErrorHandler("You are not authorized to edit this task", 403));
+  }
+
+  if (title) task.title = title;
+  if (description) task.description = description;
+  if (deadline) task.deadline = deadline;
+  
+  if (assignedTo) {
+    const assigneeEmployee = await Employee.findById(assignedTo);
+    if (!assigneeEmployee) {
+      return next(new ErrorHandler("Assignee not found", 404));
+    }
+    task.assignedTo = assignedTo;
+  }
+
+  await task.save();
+
+  // Populate references for returning to client
+  const updatedTask = await Task.findById(task._id)
+    .populate({
+      path: "assignedBy",
+      select: "employeeId user",
+      populate: { path: "user", select: "name email role" }
+    })
+    .populate({
+      path: "assignedTo",
+      select: "employeeId user",
+      populate: { path: "user", select: "name email role" }
+    });
+
+  res.status(200).json({
+    success: true,
+    message: "Task updated successfully",
+    task: updatedTask,
   });
 });

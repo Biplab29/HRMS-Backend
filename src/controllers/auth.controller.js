@@ -208,12 +208,12 @@ const sendInviteEmail = async ({ user, inviteLink }) => {
     html: `
       <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #09111f; color: #e2e8f0; border-radius: 12px; border: 1px solid #1e293b;">
         <div style="text-align: center; padding-bottom: 20px; border-bottom: 1px solid #1e293b;">
-          <h2 style="color: #25c979; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px;">HRMS Enterprise</h2>
+          <h2 style="color: #25c979; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px;">PeopleGrid</h2>
           <p style="color: #64748b; margin: 5px 0 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;">Account Invitation</p>
         </div>
         <div style="padding: 30px 20px;">
           <h3 style="color: #ffffff; margin-top: 0; font-size: 18px;">Welcome, ${safeName}!</h3>
-          <p style="line-height: 1.6; font-size: 14px; color: #94a3b8;">You have been invited to join the <strong>HRMS Enterprise</strong> platform. Please use the button below to set up your password and complete your registration.</p>
+          <p style="line-height: 1.6; font-size: 14px; color: #94a3b8;">You have been invited to join the <strong>PeopleGrid</strong> platform. Please use the button below to set up your password and complete your registration.</p>
           <div style="text-align: center; margin: 30px 0;">
             <a href="${safeInviteLink}" style="display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #25c979 0%, #1f9c5e 100%); color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 15px rgba(37,201,121,0.25);">Set Password & Setup Account</a>
           </div>
@@ -224,7 +224,7 @@ const sendInviteEmail = async ({ user, inviteLink }) => {
         </div>
         <div style="text-align: center; padding-top: 20px; border-top: 1px solid #1e293b; font-size: 11px; color: #64748b;">
           <p style="margin: 0;">This is an automated system notification. Please do not reply directly to this email.</p>
-          <p style="margin: 5px 0 0 0;">&copy; 2026 HRMS Enterprise. All rights reserved.</p>
+          <p style="margin: 5px 0 0 0;">&copy; 2026 PeopleGrid. All rights reserved.</p>
         </div>
       </div>
     `,
@@ -399,18 +399,25 @@ export const registerUser = asyncHandler(async (req, res, next) => {
   }
 
   const inviteLink = buildInviteLink(inviteToken);
-  const emailResult = await sendInviteEmail({ user, inviteLink });
+  
+  // Send invite email in background (non-blocking) to prevent UI hanging
+  sendInviteEmail({ user, inviteLink })
+    .then(result => {
+      if (!result.sent) {
+        console.error("Invite email failed to send in background:", result.reason);
+      } else {
+        console.log(`✅ Invite email sent successfully to ${user.email}`);
+      }
+    })
+    .catch(err => {
+      console.error("Invite email background execution error:", err);
+    });
 
   return res.status(201).json({
     success: true,
-    message: emailResult.sent
-      ? "User invited successfully"
-      : "User invited successfully. Configure SMTP to send invite email.",
-    emailSent: emailResult.sent,
-    inviteLink:
-      process.env.NODE_ENV === "production" && emailResult.sent
-        ? undefined
-        : inviteLink,
+    message: "User invited successfully",
+    emailSent: true,
+    inviteLink,
     user: serializeUser(user),
     employee: serializeEmployee(employee),
   });

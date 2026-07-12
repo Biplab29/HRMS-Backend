@@ -91,7 +91,7 @@ Please review the request in the HRMS Dashboard.
         const html = `
           <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #09111f; color: #e2e8f0; border-radius: 12px; border: 1px solid #1e293b;">
             <div style="text-align: center; padding-bottom: 20px; border-bottom: 1px solid #1e293b;">
-              <h2 style="color: #25c979; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px;">HRMS Enterprise</h2>
+              <h2 style="color: #25c979; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px;">PeopleGrid</h2>
               <p style="color: #ea580c; margin: 5px 0 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">New Leave Application</p>
             </div>
             <div style="padding: 30px 20px;">
@@ -127,15 +127,16 @@ Please review the request in the HRMS Dashboard.
             </div>
             <div style="text-align: center; padding-top: 20px; border-top: 1px solid #1e293b; font-size: 11px; color: #64748b;">
               <p style="margin: 0;">This is an automated system notification. Please do not reply directly to this email.</p>
-              <p style="margin: 5px 0 0 0;">&copy; 2026 HRMS Enterprise. All rights reserved.</p>
+              <p style="margin: 5px 0 0 0;">&copy; 2026 PeopleGrid. All rights reserved.</p>
             </div>
           </div>
         `;
         
         for (const recipient of adminsAndHrs) {
-          // Send email
+          // Send email in background (non-blocking)
           if (recipient.email) {
-            await sendEmail({ to: recipient.email, subject, text, html });
+            sendEmail({ to: recipient.email, subject, text, html })
+              .catch(err => console.error("Failed to send leave email to admin/hr:", err));
           }
           // Create in-app notification
           await Notification.create({
@@ -331,7 +332,8 @@ You can check details in your Dashboard.
           const html = `
             <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #09111f; color: #e2e8f0; border-radius: 12px; border: 1px solid #1e293b;">
               <div style="text-align: center; padding-bottom: 20px; border-bottom: 1px solid #1e293b;">
-                <h2 style="color: #25c979; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px;">HRMS Enterprise</h2>
+              <div style="text-align: center; padding-bottom: 20px; border-bottom: 1px solid #1e293b;">
+                <h2 style="color: #25c979; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px;">PeopleGrid</h2>
                 <p style="color: #25c979; margin: 5px 0 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Leave Request Approved</p>
               </div>
               <div style="padding: 30px 20px;">
@@ -367,12 +369,17 @@ You can check details in your Dashboard.
               </div>
               <div style="text-align: center; padding-top: 20px; border-top: 1px solid #1e293b; font-size: 11px; color: #64748b;">
                 <p style="margin: 0;">This is an automated system notification. Please do not reply directly to this email.</p>
-                <p style="margin: 5px 0 0 0;">&copy; 2026 HRMS Enterprise. All rights reserved.</p>
+                <p style="margin: 5px 0 0 0;">&copy; 2026 PeopleGrid. All rights reserved.</p>
               </div>
             </div>
           `;
 
-          await sendEmail({ to: employeeData.user.email, subject, text, html });
+          const emailResult = await sendEmail({ to: employeeData.user.email, subject, text, html });
+          if (emailResult.sent) {
+            console.log(`✅ Leave approval email sent successfully to ${employeeData.user.email}`);
+          } else {
+            console.error(`❌ Failed to send leave approval email to ${employeeData.user.email}:`, emailResult.reason);
+          }
         }
       }
     } catch (error) {
@@ -389,6 +396,8 @@ You can check details in your Dashboard.
 // Reject Leave
 export const rejectLeave =
   asyncHandler(async (req, res, next) => {
+    const { rejectionReason } = req.body || {};
+
     const leave = await Leave.findById(
       req.params.id
     );
@@ -416,6 +425,7 @@ export const rejectLeave =
     const approverEmployee = await Employee.findOne({ user: req.user._id });
 
     leave.status = "rejected";
+    leave.rejectionReason = rejectionReason || "No reason specified";
     if (approverEmployee) {
       leave.approvedBy = approverEmployee._id;
     }
@@ -428,7 +438,7 @@ export const rejectLeave =
         await Notification.create({
           user: employeeData.user._id,
           title: "Leave Rejected",
-          message: `Your ${leave.leaveType} request from ${new Date(leave.fromDate).toDateString()} to ${new Date(leave.toDate).toDateString()} has been rejected.`,
+          message: `Your ${leave.leaveType} request from ${new Date(leave.fromDate).toDateString()} to ${new Date(leave.toDate).toDateString()} has been rejected. Reason: ${leave.rejectionReason}`,
           type: "leave_rejected",
           relatedId: leave._id,
         });
@@ -440,6 +450,8 @@ export const rejectLeave =
 Hello ${employeeName},
 
 Your leave request has been rejected.
+
+Reason for Rejection: ${leave.rejectionReason}
 
 Leave Details:
 - Type: ${leave.leaveType}
@@ -453,7 +465,7 @@ You can check details in your Dashboard.
           const html = `
             <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #09111f; color: #e2e8f0; border-radius: 12px; border: 1px solid #1e293b;">
               <div style="text-align: center; padding-bottom: 20px; border-bottom: 1px solid #1e293b;">
-                <h2 style="color: #ef4444; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px;">HRMS Enterprise</h2>
+                <h2 style="color: #ef4444; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px;">PeopleGrid</h2>
                 <p style="color: #ef4444; margin: 5px 0 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Leave Request Rejected</p>
               </div>
               <div style="padding: 30px 20px;">
@@ -478,6 +490,10 @@ You can check details in your Dashboard.
                     <td style="padding: 12px 15px; border-bottom: 1px solid #1e293b; color: #ffffff;">${new Date(leave.toDate).toDateString()}</td>
                   </tr>
                   <tr>
+                    <td style="padding: 12px 15px; border-bottom: 1px solid #1e293b; color: #64748b;">Reason for Rejection</td>
+                    <td style="padding: 12px 15px; border-bottom: 1px solid #1e293b; color: #ffffff; font-style: italic;">"${leave.rejectionReason}"</td>
+                  </tr>
+                  <tr>
                     <td style="padding: 12px 15px; color: #64748b;">Status</td>
                     <td style="padding: 12px 15px; color: #ef4444; font-weight: bold; text-transform: uppercase;">Rejected</td>
                   </tr>
@@ -489,12 +505,17 @@ You can check details in your Dashboard.
               </div>
               <div style="text-align: center; padding-top: 20px; border-top: 1px solid #1e293b; font-size: 11px; color: #64748b;">
                 <p style="margin: 0;">This is an automated system notification. Please do not reply directly to this email.</p>
-                <p style="margin: 5px 0 0 0;">&copy; 2026 HRMS Enterprise. All rights reserved.</p>
+                <p style="margin: 5px 0 0 0;">&copy; 2026 PeopleGrid. All rights reserved.</p>
               </div>
             </div>
           `;
 
-          await sendEmail({ to: employeeData.user.email, subject, text, html });
+          const emailResult = await sendEmail({ to: employeeData.user.email, subject, text, html });
+          if (emailResult.sent) {
+            console.log(`✅ Leave rejection email sent successfully to ${employeeData.user.email}`);
+          } else {
+            console.error(`❌ Failed to send leave rejection email to ${employeeData.user.email}:`, emailResult.reason);
+          }
         }
       }
     } catch (error) {
