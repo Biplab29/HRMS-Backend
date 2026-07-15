@@ -14,7 +14,7 @@ export const addPayroll = asyncHandler(
       deduction = 0,
     } = req.body;
 
-    if (!employee || !month || !basicSalary) {
+    if (!employee || !month || basicSalary === undefined || basicSalary === null || basicSalary === '') {
       return next(
         new ErrorHandler(
           "Employee, month and basic salary are required",

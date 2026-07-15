@@ -23,7 +23,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       minlength: 6,
       select: false,
-      // নিজে set করবে, তাই initially null থাকবে
+     
     },
 
     role: {
@@ -42,7 +42,7 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
-    // system এই token generate করে email পাঠাবে
+  
     inviteToken: {
       type: String,
       default: null,
@@ -65,7 +65,6 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ✅ Security audit-এর জন্য useful
     lastLogin: {
       type: Date,
       default: null,
@@ -90,7 +89,8 @@ userSchema.methods.comparePassword = async function (password) {
   return await bcrypt.compare(password, this.password);
 };
 
-// Invite token generate করার method
+
+
 userSchema.methods.generateInviteToken = function () {
   const token = crypto.randomBytes(32).toString("hex");
   this.inviteToken = crypto

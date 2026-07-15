@@ -37,7 +37,6 @@ const employeeSchema = new mongoose.Schema(
     },
 
     address: {
-      // ✅ Object করা হয়েছে — better structure
       street: { type: String, trim: true },
       city: { type: String, trim: true },
       state: { type: String, trim: true },
@@ -92,7 +91,6 @@ const employeeSchema = new mongoose.Schema(
       default: "active",
     },
 
-    // complete করেছে কিনা track করতে
     onboardingCompleted: {
       type: Boolean,
       default: false,
@@ -112,8 +110,8 @@ const employeeSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// ✅ Employee terminated হলে User-এর isActive
-// automatically false হয়ে যাবে
+// Employee terminated 
+// automatically false 
 employeeSchema.pre("save", async function () {
   if (this.isModified("status") && this.status === "terminated") {
     await mongoose.model("User").findByIdAndUpdate(
@@ -124,3 +122,8 @@ employeeSchema.pre("save", async function () {
 });
 
 export const Employee = mongoose.model("Employee", employeeSchema);
+
+
+
+
+

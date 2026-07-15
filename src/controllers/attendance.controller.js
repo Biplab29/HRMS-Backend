@@ -184,7 +184,7 @@ export const deleteAttendance =
 
 export const checkIn = asyncHandler(
   async (req, res, next) => {
-    let targetEmployeeId = req.body.employee;
+    let targetEmployeeId = req.body?.employee;
 
     // Secure: If user is employee, or if employee is not specified in body, resolve from logged in user's profile
     if (req.user.role === "employee" || !targetEmployeeId) {
@@ -233,7 +233,7 @@ export const checkIn = asyncHandler(
 
 export const checkOut = asyncHandler(
   async (req, res, next) => {
-    let targetEmployeeId = req.body.employee;
+    let targetEmployeeId = req.body?.employee;
 
     // Secure: If user is employee, or if employee is not specified in body, resolve from logged in user's profile
     if (req.user.role === "employee" || !targetEmployeeId) {
